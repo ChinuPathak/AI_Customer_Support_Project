@@ -7,11 +7,13 @@ import chromadb
 from chatPrompt import build_prompt
 from faq import faq
 import redis
+from uuid import uuid4
 
 redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
 chroma_client = chromadb.HttpClient(host='localhost', port=8001)
 collection = chroma_client.get_or_create_collection(name="my_collection1")
+chat_collection = chroma_client.get_or_create_collection(name="chat_memory")
 
 app = FastAPI()
 load_dotenv()
@@ -41,6 +43,7 @@ if collection.count() == 0:
 
 @app.post("/chat")
 def chat(request: ChatRequest):
+    print("request>>>>>>>>>>>>>>" , request)
     name = request.user_name
     print(name)
     query = request.message
@@ -48,17 +51,28 @@ def chat(request: ChatRequest):
     chatName = f"chat:{name}"
     print(chatName)
 
-    cached_data = redis_client.json().get(chatName)
+    # chat_collection = chroma_client.get_or_create_collection(
+    #     name=f"chat_memory_{name}"
+    # )
 
-    if cached_data:
-        for item in cached_data:
-            if item["question"] == query:
-                print("Cache Hit")
-                return {
-                    "response": item["answer"]
-                }
-    
-    # Query data
+    chat_results = chat_collection.query(
+        query_texts=[query],
+        n_results=1
+    )
+    print("chat result>>>>>>>>>>>>>>>>>>" , chat_results)
+
+    if (
+        chat_results["documents"]
+        and len(chat_results["documents"][0]) > 0
+        and chat_results["distances"][0][0] < 0.2 
+    ):
+        print("🔥 Semantic Cache Hit")
+        return {
+            "response": chat_results["metadatas"][0][0]["answer"]
+        }
+
+    print("❌ Cache Miss")
+
     results = collection.query(
         query_texts=[query],
         n_results=2
@@ -66,6 +80,15 @@ def chat(request: ChatRequest):
     print(results)
     prompt = build_prompt(results, query)
     response = model.generate_content(prompt)
+
+    chat_collection.add(
+        documents=[query],
+        ids=[str(uuid4())],
+        metadatas=[{
+            "user": name,
+            "answer": response.text
+        }]
+    )
     
     if not redis_client.exists(chatName):
         redis_client.json().set(chatName, "$", [])
