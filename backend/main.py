@@ -8,15 +8,23 @@ from chatPrompt import build_prompt
 from faq import faq
 import redis
 from uuid import uuid4
+from fastapi.middleware.cors import CORSMiddleware
 
 redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
 chroma_client = chromadb.HttpClient(host='localhost', port=8001)
 collection = chroma_client.get_or_create_collection(name="my_collection1")
-chat_collection = chroma_client.get_or_create_collection(name="chat_memory")
+# chat_collection = chroma_client.get_or_create_collection(name="chat_memory")
 
 app = FastAPI()
 load_dotenv()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for development (later restrict this)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ChatRequest(BaseModel):
     user_name: str
@@ -51,9 +59,9 @@ def chat(request: ChatRequest):
     chatName = f"chat:{name}"
     print(chatName)
 
-    # chat_collection = chroma_client.get_or_create_collection(
-    #     name=f"chat_memory_{name}"
-    # )
+    chat_collection = chroma_client.get_or_create_collection(
+        name=f"chat_memory_{name}"
+    )
 
     chat_results = chat_collection.query(
         query_texts=[query],
@@ -103,3 +111,13 @@ def chat(request: ChatRequest):
     return {
         "response": response.text
     }
+
+@app.get("/history/{username}")
+def get_history(username: str): 
+    chatName = f"chat:{username}"
+
+    if not redis_client.exists(chatName):
+        return {"history": []}
+
+    data = redis_client.json().get(chatName)
+    return {"history": data}
