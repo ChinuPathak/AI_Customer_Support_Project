@@ -9,6 +9,7 @@ from faq import faq
 import redis
 from uuid import uuid4
 from fastapi.middleware.cors import CORSMiddleware
+import json
 
 redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
@@ -49,6 +50,12 @@ if collection.count() == 0:
             metadatas=[{"category": data["category"]}]
         )
 
+def extract_answer(doc):
+    if "Answer:" in doc:
+        return doc.split("Answer:")[1].strip()
+    return None
+
+
 @app.post("/chat")
 def chat(request: ChatRequest):
     print("request>>>>>>>>>>>>>>" , request)
@@ -83,18 +90,21 @@ def chat(request: ChatRequest):
 
     results = collection.query(
         query_texts=[query],
-        n_results=2
+        n_results=1
     )
     print(results)
-    prompt = build_prompt(results, query)
-    response = model.generate_content(prompt)
+    doc = results['documents'][0][0]
+    response = extract_answer(doc)
+    print("response>>>>>>>>>>>>>" , response)
+    # prompt = build_prompt(results, query)
+    # response = model.generate_content(prompt)
 
     chat_collection.add(
         documents=[query],
         ids=[str(uuid4())],
         metadatas=[{
             "user": name,
-            "answer": response.text
+            "answer": response
         }]
     )
     
@@ -103,13 +113,13 @@ def chat(request: ChatRequest):
 
     chat_data = {
         "question": query,
-        "answer": response.text
+        "answer": response
     }
 
     redis_client.json().arrappend(chatName, "$", chat_data)
 
     return {
-        "response": response.text
+        "response": response
     }
 
 @app.get("/history/{username}")
